@@ -345,7 +345,6 @@ const PLUGIN_CATEGORIES = [
       { pkg: "luci-app-pptp-server",           name: "PPTP VPN",       icon: "🔒", desc: { zh: "PPTP VPN 服务器",   en: "PPTP VPN server" } },
       { pkg: "luci-app-ipsec-server",          name: "IPSec VPN",      icon: "🔒", desc: { zh: "IPSec VPN 服务器",  en: "IPSec VPN server" } },
       { pkg: "luci-app-n2n",                   name: "N2N VPN",        icon: "🔒", desc: { zh: "N2N P2P VPN",       en: "N2N P2P VPN" } },
-      { pkg: "luci-app-zerotier",  hot: true, name: "ZeroTier（VPN）",icon: "🔗", desc: { zh: "ZeroTier 虚拟局域网（VPN版）", en: "ZeroTier VPN" } },
       { pkg: "luci-app-tinc",                  name: "Tinc VPN",       icon: "🔒", desc: { zh: "Tinc 网状 VPN",     en: "Tinc mesh VPN" } },
     ]
   },
@@ -423,7 +422,6 @@ const PLUGIN_CATEGORIES = [
       { pkg: "luci-app-clamav",         name: "ClamAV",           icon: "🦠", desc: { zh: "开源杀毒软件",           en: "Open-source antivirus" } },
       { pkg: "luci-app-beardropper",    name: "BearDropper",      icon: "🐻", desc: { zh: "暴力破解防护",           en: "Brute-force protection" } },
       { pkg: "luci-app-fail2ban",        name: "Fail2ban",         icon: "🚫", desc: { zh: "SSH 暴力破解防护",       en: "Fail2ban SSH protection" } },
-      { pkg: "luci-app-npc",             name: "NPC 客户端",       icon: "🚇", desc: { zh: "NPS 内网穿透客户端",     en: "NPS tunnel client" } },
     ]
   },
   {
