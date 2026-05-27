@@ -28,11 +28,10 @@ jobs:
       - name: 安装编译依赖
         run: |
           sudo apt-get update -q
-          # libusb 开发库（用于 Linux 本地编译）
           sudo apt-get install -y libusb-1.0-0-dev pkg-config
-          # Windows 交叉编译工具链
           sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-mingw-w64-i686
-          # macOS 交叉编译（用 osxcross，这里用纯 CGO_ENABLED=0 方案）
+          # rsrc 用于生成 Windows manifest .syso 文件
+          go install github.com/akavel/rsrc@latest
 
       - name: 下载 libusb 静态库 + usbdk 安装包
         run: |
@@ -71,6 +70,13 @@ jobs:
             -trimpath \
             -o ../dist/linux_x64/刷机工具 .
 
+      - name: 生成 Windows manifest syso（UAC 管理员权限）
+        working-directory: flashtool
+        run: |
+          # rsrc 读取 app.manifest 生成 rsrc.syso，Go 编译时自动链接
+          rsrc -manifest app.manifest -o rsrc_amd64.syso -arch amd64
+          rsrc -manifest app.manifest -o rsrc_386.syso   -arch 386
+
       - name: 编译 Windows x64（交叉编译）
         working-directory: flashtool
         env:
@@ -80,16 +86,14 @@ jobs:
           CC: x86_64-w64-mingw32-gcc
         run: |
           LIBUSB_DIR="${{ github.workspace }}/libusb_win"
-          # 写 rc 文件，注意不能有前导空格
-          printf '1 24 "app.manifest"\n' > app_manifest.rc
-          x86_64-w64-mingw32-windres app_manifest.rc -O coff -o app_manifest.syso
+          cp rsrc_amd64.syso rsrc.syso
           CGO_CFLAGS="-I${LIBUSB_DIR}/include/libusb-1.0" \
           CGO_LDFLAGS="-L${LIBUSB_DIR}/VS2019/MS64/static -lusb-1.0 -lsetupapi -static" \
           go build \
             -ldflags="-s -w -X main.Version=${{ github.event.inputs.version }}" \
             -trimpath \
             -o ../dist/win_x64/刷机工具.exe .
-          rm -f app_manifest.syso app_manifest.rc
+          rm -f rsrc.syso
 
       - name: 编译 Windows x86（交叉编译）
         working-directory: flashtool
@@ -100,15 +104,14 @@ jobs:
           CC: i686-w64-mingw32-gcc
         run: |
           LIBUSB_DIR="${{ github.workspace }}/libusb_win"
-          printf '1 24 "app.manifest"\n' > app_manifest.rc
-          i686-w64-mingw32-windres app_manifest.rc -O coff -o app_manifest.syso
+          cp rsrc_386.syso rsrc.syso
           CGO_CFLAGS="-I${LIBUSB_DIR}/include/libusb-1.0" \
           CGO_LDFLAGS="-L${LIBUSB_DIR}/VS2019/MS32/static -lusb-1.0 -lsetupapi -static" \
           go build \
             -ldflags="-s -w -X main.Version=${{ github.event.inputs.version }}" \
             -trimpath \
             -o ../dist/win_x86/刷机工具.exe .
-          rm -f app_manifest.syso app_manifest.rc
+          rm -f rsrc.syso rsrc_amd64.syso rsrc_386.syso
 
       - name: 编译 Linux arm64（交叉编译）
         run: |
