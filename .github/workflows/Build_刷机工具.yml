@@ -28,36 +28,40 @@ jobs:
       - name: 安装编译依赖
         run: |
           sudo apt-get update -q
+          # Linux 本地编译用的 libusb
           sudo apt-get install -y libusb-1.0-0-dev pkg-config
+          # Windows 交叉编译工具链
           sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-mingw-w64-i686
-          # rsrc 用于生成 Windows manifest .syso 文件
+          # rsrc 生成 Windows UAC manifest syso
           go install github.com/akavel/rsrc@latest
 
-      - name: 下载 libusb 静态库 + usbdk 安装包
+      - name: 下载 libusb Windows 静态库（mingw 格式）
         run: |
-          # libusb Windows 预编译静态库
+          # 下载官方 release 包，里面有 MinGW 格式的 .a 静态库
           wget -q https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.7z -O libusb.7z
           7z x libusb.7z -olibusb_win
+          # 打印实际结构，方便排查
+          echo "=== .a 文件 ==="
+          find libusb_win -name "*.a"
+          echo "=== libusb.h ==="
+          find libusb_win -name "libusb.h"
 
-          # usbdk 安装包（内嵌进 exe，运行时静默安装）
+      - name: 下载 usbdk 安装包（内嵌进 exe）
+        run: |
           mkdir -p flashtool/winenv/usbdk
-          wget -q https://github.com/daynix/UsbDk/releases/download/v1.00-22/UsbDk_1.0.22_x64.msi \
+          wget -q "https://github.com/daynix/UsbDk/releases/download/v1.00-22/UsbDk_1.0.22_x64.msi" \
             -O flashtool/winenv/usbdk/usbdk_x64.msi
-          wget -q https://github.com/daynix/UsbDk/releases/download/v1.00-22/UsbDk_1.0.22_x86.msi \
+          wget -q "https://github.com/daynix/UsbDk/releases/download/v1.00-22/UsbDk_1.0.22_x86.msi" \
             -O flashtool/winenv/usbdk/usbdk_x86.msi
-          echo "usbdk 文件："
           ls -lh flashtool/winenv/usbdk/
-          echo "libusb 目录结构："
-          ls -lh libusb_win/
 
       - name: 下载 Go 依赖
         working-directory: flashtool
         run: |
           go mod tidy
           go mod download
-          # go.sum 由 tidy 生成，确保后续编译不报 missing go.sum
 
-      - name: 编译 Linux x64（原生）
+      - name: 编译 Linux x64
         working-directory: flashtool
         env:
           GOOS: linux
@@ -72,11 +76,10 @@ jobs:
       - name: 生成 Windows manifest syso（UAC 管理员权限）
         working-directory: flashtool
         run: |
-          # rsrc 读取 app.manifest 生成 rsrc.syso，Go 编译时自动链接
           rsrc -manifest app.manifest -o rsrc_amd64.syso -arch amd64
-          rsrc -manifest app.manifest -o rsrc_386.syso   -arch 386
+          rsrc -manifest app.manifest -o rsrc_386.syso -arch 386
 
-      - name: 编译 Windows x64（交叉编译）
+      - name: 编译 Windows x64
         working-directory: flashtool
         env:
           GOOS: windows
@@ -84,17 +87,25 @@ jobs:
           CGO_ENABLED: 1
           CC: x86_64-w64-mingw32-gcc
         run: |
-          LIBUSB_DIR="${{ github.workspace }}/libusb_win"
+          # 自动找 mingw 格式的 libusb 静态库
+          LIB=$(find "${{ github.workspace }}/libusb_win" -name "libusb-1.0.a" | grep -iE "mingw|gcc|64" | head -1)
+          # 如果没找到带 mingw 标记的，取第一个 64 位的
+          if [ -z "$LIB" ]; then
+            LIB=$(find "${{ github.workspace }}/libusb_win" -name "libusb-1.0.a" | head -1)
+          fi
+          INC=$(find "${{ github.workspace }}/libusb_win" -name "libusb.h" | head -1 | xargs dirname)
+          echo "使用库: $LIB"
+          echo "头文件: $INC"
           cp rsrc_amd64.syso rsrc.syso
-          CGO_CFLAGS="-I${LIBUSB_DIR}/include/libusb-1.0" \
-          CGO_LDFLAGS="-L${LIBUSB_DIR}/VS2019/MS64/static -lusb-1.0 -lsetupapi -static" \
+          CGO_CFLAGS="-I${INC}" \
+          CGO_LDFLAGS="-L$(dirname $LIB) -lusb-1.0 -lsetupapi -static-libgcc" \
           go build \
             -ldflags="-s -w -X main.Version=${{ github.event.inputs.version }}" \
             -trimpath \
             -o ../dist/win_x64/刷机工具.exe .
           rm -f rsrc.syso
 
-      - name: 编译 Windows x86（交叉编译）
+      - name: 编译 Windows x86
         working-directory: flashtool
         env:
           GOOS: windows
@@ -102,34 +113,30 @@ jobs:
           CGO_ENABLED: 1
           CC: i686-w64-mingw32-gcc
         run: |
-          LIBUSB_DIR="${{ github.workspace }}/libusb_win"
+          LIB=$(find "${{ github.workspace }}/libusb_win" -name "libusb-1.0.a" | grep -iE "mingw|gcc|32" | head -1)
+          if [ -z "$LIB" ]; then
+            LIB=$(find "${{ github.workspace }}/libusb_win" -name "libusb-1.0.a" | tail -1)
+          fi
+          INC=$(find "${{ github.workspace }}/libusb_win" -name "libusb.h" | head -1 | xargs dirname)
+          echo "使用库: $LIB"
+          echo "头文件: $INC"
           cp rsrc_386.syso rsrc.syso
-          CGO_CFLAGS="-I${LIBUSB_DIR}/include/libusb-1.0" \
-          CGO_LDFLAGS="-L${LIBUSB_DIR}/VS2019/MS32/static -lusb-1.0 -lsetupapi -static" \
+          CGO_CFLAGS="-I${INC}" \
+          CGO_LDFLAGS="-L$(dirname $LIB) -lusb-1.0 -lsetupapi -static-libgcc" \
           go build \
             -ldflags="-s -w -X main.Version=${{ github.event.inputs.version }}" \
             -trimpath \
             -o ../dist/win_x86/刷机工具.exe .
           rm -f rsrc.syso rsrc_amd64.syso rsrc_386.syso
 
-      - name: 编译 Linux arm64（交叉编译）
-        run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu libusb-1.0-0-dev:arm64 2>/dev/null || \
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-        continue-on-error: true
-      - name: 编译 Linux arm64 二进制
+      - name: 编译 Linux arm64
         working-directory: flashtool
         env:
           GOOS: linux
           GOARCH: arm64
-          CGO_ENABLED: 1
-          CC: aarch64-linux-gnu-gcc
+          CGO_ENABLED: 0
         run: |
           go build \
-            -ldflags="-s -w -X main.Version=${{ github.event.inputs.version }}" \
-            -trimpath \
-            -o ../dist/linux_arm64/刷机工具 . || \
-          CGO_ENABLED=0 go build \
             -ldflags="-s -w -X main.Version=${{ github.event.inputs.version }}" \
             -trimpath \
             -o ../dist/linux_arm64/刷机工具 .
@@ -141,54 +148,36 @@ jobs:
 
           write_readme() {
             local dir=$1
-            local os_name=$2
-            local run_cmd=$3
-            cat > "$dir/使用说明.txt" << EOF
-          【OpenStick 傻瓜一键刷机工具 $VERSION】
-
-          适用设备：高通410系列随身WiFi（UFI001B/C、UFI003、SP970 等）
-
-          使用步骤：
-          1. 将 boot.img 和 system.img 放入 rom 文件夹
-          2. 按住设备上的 音量- 键不松开
-          3. 将 USB 线插入电脑
-          4. $run_cmd
-          5. 等待自动完成（约3-5分钟），全程无需任何操作
-
-          注意：
-          - 刷机过程中请勿拔出 USB
-          - 基带会自动备份到 backup_日期时间 文件夹
-          - 无需安装任何驱动
-
-          固件下载：https://github.com/x7780/immortalwrt-Actios
-          EOF
+            local run_cmd=$2
+            printf '【OpenStick 傻瓜一键刷机工具 %s】\n\n适用设备：高通410系列随身WiFi（UFI001B/C、UFI003、SP970 等）\n\n使用步骤：\n1. 将 boot.img 和 system.img 放入 rom 文件夹\n2. 按住设备上的 音量- 键不松开\n3. 将 USB 线插入电脑\n4. %s\n5. 等待自动完成（约3-5分钟），全程无需任何操作\n\n注意：\n- 刷机过程中请勿拔出 USB\n- 基带会自动备份到 backup_日期时间 文件夹\n- 无需安装任何驱动\n\n固件下载：https://github.com/x7780/immortalwrt-Actios\n' \
+              "$VERSION" "$run_cmd" > "$dir/使用说明.txt"
           }
 
           # Windows x64
           mkdir -p dist/win_x64/rom
           cp $ROM_DIR/*.bin $ROM_DIR/*.mbn $ROM_DIR/*.img dist/win_x64/rom/ 2>/dev/null || true
-          write_readme dist/win_x64 "Windows" "双击运行 刷机工具.exe"
-          cd dist && zip -r OpenStick刷机工具_Windows_x64_${VERSION}.zip win_x64/ && cd ..
+          write_readme dist/win_x64 "双击运行 刷机工具.exe"
+          cd dist && zip -r "OpenStick刷机工具_Windows_x64_${VERSION}.zip" win_x64/ && cd ..
 
           # Windows x86
           mkdir -p dist/win_x86/rom
           cp $ROM_DIR/*.bin $ROM_DIR/*.mbn $ROM_DIR/*.img dist/win_x86/rom/ 2>/dev/null || true
-          write_readme dist/win_x86 "Windows" "双击运行 刷机工具.exe"
-          cd dist && zip -r OpenStick刷机工具_Windows_x86_${VERSION}.zip win_x86/ && cd ..
+          write_readme dist/win_x86 "双击运行 刷机工具.exe"
+          cd dist && zip -r "OpenStick刷机工具_Windows_x86_${VERSION}.zip" win_x86/ && cd ..
 
           # Linux x64
           mkdir -p dist/linux_x64/rom
           cp $ROM_DIR/*.bin $ROM_DIR/*.mbn $ROM_DIR/*.img dist/linux_x64/rom/ 2>/dev/null || true
           chmod +x dist/linux_x64/刷机工具
-          write_readme dist/linux_x64 "Linux" "终端运行：./刷机工具"
-          cd dist && tar -czf OpenStick刷机工具_Linux_x64_${VERSION}.tar.gz linux_x64/ && cd ..
+          write_readme dist/linux_x64 "终端运行：./刷机工具"
+          cd dist && tar -czf "OpenStick刷机工具_Linux_x64_${VERSION}.tar.gz" linux_x64/ && cd ..
 
           # Linux arm64
           mkdir -p dist/linux_arm64/rom
           cp $ROM_DIR/*.bin $ROM_DIR/*.mbn $ROM_DIR/*.img dist/linux_arm64/rom/ 2>/dev/null || true
-          chmod +x dist/linux_arm64/刷机工具 2>/dev/null || true
-          write_readme dist/linux_arm64 "Linux" "终端运行：./刷机工具"
-          cd dist && tar -czf OpenStick刷机工具_Linux_arm64_${VERSION}.tar.gz linux_arm64/ && cd ..
+          chmod +x dist/linux_arm64/刷机工具
+          write_readme dist/linux_arm64 "终端运行：./刷机工具"
+          cd dist && tar -czf "OpenStick刷机工具_Linux_arm64_${VERSION}.tar.gz" linux_arm64/ && cd ..
 
           echo "打包完成："
           ls -lh dist/*.zip dist/*.tar.gz
